@@ -222,8 +222,7 @@ def get_followers(user_id):
     return followers
 def process_user_and_followers(user_id, depth=0):
     if depth < 2:
-        print('Текущий уровень: ', depth)
-        # get_subscriptions(user_id)
+        # print('Текущий уровень: ', depth)
         user_info = get_user_info(user_id)
         full_name = f"{user_info.get('first_name', '')} {user_info.get('last_name', '')}"
         save_user_to_neo4j(user_id,
@@ -239,12 +238,52 @@ def process_user_and_followers(user_id, depth=0):
 
         for follower_id in followers:
             process_user_and_followers(follower_id, depth + 1)
+def query_database(query):
+    with driver.session() as session:
+        result = session.run(query)
+        return [record for record in result]
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Получение информации о пользователе ВКонтакте и сохранение в Neo4j")
-    # parser.add_argument("--user_id", type=str, default="olegan_west", help="ID пользователя ВКонтакте")
-    # parser.add_argument("--user_id", type=str, default="besso_sonia", help="ID пользователя ВКонтакте")
-    parser.add_argument("--user_id", type=str, default="yllwftc00", help="ID пользователя ВКонтакте")
+    parser.add_argument("--user_id", type=str, default="besso_sonia", help="ID пользователя ВКонтакте")
 
     args = parser.parse_args()
     process_user_and_followers(get_numeric_user_id(args.user_id))
+
+    #region запросы на выборку
+    total_users_query = "MATCH (u:User) RETURN count(u) AS total_users"
+    total_groups_query = "MATCH (g:Group) RETURN count(g) AS total_groups"
+
+    top_users_query = """
+            MATCH (u:User)<-[:FOLLOW]-(f)
+            RETURN u.id AS user_id, u.name AS name, count(f) AS follower_count
+            ORDER BY follower_count DESC LIMIT 5
+        """
+
+    popular_groups_query = """
+            MATCH (g:Group)<-[:SUBSCRIBED_TO]-(u)
+            RETURN g.id AS group_id, g.name as name, count(u) AS subscriber_count
+            ORDER BY subscriber_count DESC LIMIT 5
+        """
+
+    mutual_followers_query = """
+            MATCH (u1:User)-[:FOLLOW]->(u2:User)
+            WHERE u1 <> u2 AND (u2)-[:FOLLOW]->(u1)
+            RETURN u1.name AS name1, u2.name AS name2
+        """
+    #endregion
+    print("\nЗАПРОСЫ НА ВЫБОРКУ=================================================")
+    print("Всего пользователей:", query_database(total_users_query)[0]['total_users'])
+    print("Всего групп:", query_database(total_groups_query)[0]['total_groups'])
+
+    print("\nТоп 5 пользователей по количеству подписчиков:")
+    for record in query_database(top_users_query):
+        print(f"ID: {record['user_id']}, {record['name']}. Количество подписчиков: {record['follower_count']}")
+
+    print("\nТоп 5 самых популярных групп:")
+    for record in query_database(popular_groups_query):
+        print(f"ID: {record['group_id']}, \"{record['name']}\". Подписчиков: {record['subscriber_count']}")
+
+    print("\nПользователи, которые подписаны друг на друга:")
+    for record in query_database(mutual_followers_query):
+        print(f"{record['name1']}, {record['name2']}")
